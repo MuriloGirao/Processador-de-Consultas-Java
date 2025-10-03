@@ -18,21 +18,29 @@ public class Sintaxe {
 
     private static final String SELECT_REGEX =
             "^\\s*SELECT\\s+" + COLUMNS +                // grupo 1 = colunas
-                    "\\s+FROM\\s+" + TABLE +                    // grupo 2 = tabela principal
-                    JOIN +                                      // grupo 3+ = joins (pares de tabela+condição)
+                    "\\s+FROM\\s+" + TABLE +            // grupo 2 = tabela principal
+                    JOIN +                              // grupo 3+ = joins (pares de tabela+condição)
                     "(?:\\s+WHERE\\s+(" + CONDITION + "))?" +   // último grupo = condição WHERE
                     "\\s*;?\\s*$";
 
     private static final Pattern PATTERN = Pattern.compile(SELECT_REGEX, Pattern.CASE_INSENSITIVE);
 
+
     public boolean validarSelect(String query) {
         if (query == null || query.isBlank()) return false;
-        return PATTERN.matcher(query.trim()).matches();
+        Matcher m = PATTERN.matcher(query.trim());
+        if (!m.matches()) return false;
+
+        return validarTabelasEColunas(m);
     }
 
     public String extrairPartes(String query) {
         Matcher m = PATTERN.matcher(query.trim());
         if (!m.matches()) return "Query inválida";
+
+        if (!validarTabelasEColunas(m)) {
+            return "Query inválida (tabelas ou colunas não existem)";
+        }
 
         StringBuilder sb = new StringBuilder();
         sb.append("Query válida\n");
@@ -71,4 +79,82 @@ public class Sintaxe {
         return sb.toString();
     }
 
+
+    private boolean validarTabelasEColunas(Matcher m) {
+        String colunasStr = m.group(1);
+        String[] colunas = colunasStr.split("\\s*,\\s*");
+
+        String tabelaPrincipal = normalizarNome(m.group(2));
+        if (!contémTabela(tabelaPrincipal)) {
+            return false;
+        }
+
+        for (String coluna : colunas) {
+            if (coluna.equals("*")) continue;
+            String[] partes = coluna.split("\\.");
+            if (partes.length == 2) {
+                String tabela = normalizarNome(partes[0]);
+                String atributo = normalizarNome(partes[1]);
+                if (!contémAtributo(tabela, atributo)) {
+                    return false;
+                }
+            } else {
+                if (!contémAtributo(tabelaPrincipal, normalizarNome(coluna))) {
+                    return false;
+                }
+            }
+        }
+
+        int groupCount = m.groupCount();
+        for (int i = 3; i < groupCount; i += 2) {
+            String tabelaJoin = m.group(i);
+            if (tabelaJoin != null && !contémTabela(normalizarNome(tabelaJoin))) {
+                return false;
+            }
+        }
+
+        String where = m.group(groupCount);
+        if (where != null) {
+            Matcher identMatcher = Pattern.compile(IDENT).matcher(where);
+            while (identMatcher.find()) {
+                String token = identMatcher.group();
+                if (token.matches("\\d+")) continue; // número
+                if (token.equalsIgnoreCase("AND") || token.equalsIgnoreCase("OR")) continue;
+
+                String[] partes = token.split("\\.");
+                if (partes.length == 2) {
+                    String tabela = normalizarNome(partes[0]);
+                    String atributo = normalizarNome(partes[1]);
+                    if (!contémAtributo(tabela, atributo)) {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        return true;
+    }
+
+
+    private String normalizarNome(String nome) {
+        return nome.trim().toLowerCase(); 
+    }
+
+    private boolean contémTabela(String tabela) {
+        for (String t : Valores.tabelas.keySet()) {
+            if (t.equalsIgnoreCase(tabela)) return true;
+        }
+        return false;
+    }
+
+    private boolean contémAtributo(String tabela, String atributo) {
+        for (String t : Valores.tabelas.keySet()) {
+            if (t.equalsIgnoreCase(tabela)) {
+                for (String a : Valores.tabelas.get(t)) {
+                    if (a.equalsIgnoreCase(atributo)) return true;
+                }
+            }
+        }
+        return false;
+    }
 }

@@ -1,6 +1,8 @@
 package Reader;
 
-import java.util.regex.*;
+import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class Sintaxe {
 
@@ -79,6 +81,34 @@ public class Sintaxe {
         return sb.toString();
     }
 
+    public Map<String, Object> extrairPartesEstruturadas(String query) {
+        Map<String, Object> partes = new HashMap<>();
+        Matcher m = PATTERN.matcher(query.trim());
+        if (!m.matches()) return partes;
+
+        String colunasStr = m.group(1);
+        List<String> colunas = Arrays.asList(colunasStr.split("\\s*,\\s*"));
+        partes.put("colunas", colunas);
+
+        partes.put("tabelaPrincipal", m.group(2));
+
+        // Joins — extrair com regex separado
+        List<Map<String, String>> joins = new ArrayList<>();
+        Matcher joinMatcher = Pattern.compile("JOIN\\s+(" + IDENT + ")\\s+ON\\s+(" + CONDITION + ")", Pattern.CASE_INSENSITIVE).matcher(query);
+        while (joinMatcher.find()) {
+            Map<String, String> j = new HashMap<>();
+            j.put("tabela", joinMatcher.group(1));
+            j.put("condicao", joinMatcher.group(2));
+            joins.add(j);
+        }
+        partes.put("joins", joins);
+
+        // WHERE
+        Matcher whereMatcher = Pattern.compile("WHERE\\s+(" + CONDITION + ")", Pattern.CASE_INSENSITIVE).matcher(query);
+        partes.put("where", whereMatcher.find() ? whereMatcher.group(1) : null);
+
+        return partes;
+    }
 
     private boolean validarTabelasEColunas(Matcher m) {
         String colunasStr = m.group(1);

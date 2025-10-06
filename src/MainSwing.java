@@ -1,3 +1,4 @@
+import Reader.ConversorAlgebra;
 import Reader.Sintaxe;
 import javax.swing.*;
 import java.awt.*;
@@ -55,14 +56,24 @@ public class MainSwing extends JFrame {
             return;
         }
 
-        String resultado = "";
-        resultado += "Validação:\n" + sintaxe.validarSelect(consulta) + "\n\n";
-        resultado += "Partes extraídas:\n" + sintaxe.extrairPartes(consulta) + "\n";
+        StringBuilder resultado = new StringBuilder();
+        boolean valida = sintaxe.validarSelect(consulta);
 
-        outputArea.setText(resultado);
+        resultado.append("Validação: ").append(valida ? "OK" : "Falhou").append("\n\n");
+
+        if (valida) {
+            resultado.append(sintaxe.extrairPartes(consulta)).append("\n");
+
+            ConversorAlgebra conversor = new ConversorAlgebra();
+            String algebra = conversor.converterParaAlgebra(consulta, sintaxe);
+            resultado.append("\nÁlgebra Relacional:\n").append(algebra);
+        }
+
+        outputArea.setText(resultado.toString());
     }
-
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> new MainSwing());
     }
 }
+
+

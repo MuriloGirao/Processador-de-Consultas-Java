@@ -1,4 +1,4 @@
-package Execution;
+package Execution.Graph;
 
 /**
  * Representa uma conexão (aresta) entre dois nós no grafo de execução.

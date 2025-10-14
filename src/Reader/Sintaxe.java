@@ -12,179 +12,75 @@ public class Sintaxe {
     private static final String VALUE   = "(?:" + NUMBER + "|" + STRING + "|" + IDENT + ")";
     private static final String OP      = "(?:=|<>|!=|>=|<=|>|<)";
     private static final String ATOM    = IDENT + "\\s*" + OP + "\\s*" + VALUE;
-
     private static final String CONDITION = ATOM + "(?:\\s+(?:AND|OR)\\s+" + ATOM + ")*";
     private static final String JOIN      = "(?:\\s+JOIN\\s+(" + IDENT + ")\\s+ON\\s+(" + CONDITION + "))*";
     private static final String COLUMNS   = "(\\*|(?:" + IDENT + "(?:\\s*\\.\\s*" + IDENT + ")?)(?:\\s*,\\s*(?:" + IDENT + "(?:\\s*\\.\\s*" + IDENT + ")?))*)";
     private static final String TABLE     = "(" + IDENT + ")";
 
     private static final String SELECT_REGEX =
-            "^\\s*SELECT\\s+" + COLUMNS +                // grupo 1 = colunas
-                    "\\s+FROM\\s+" + TABLE +            // grupo 2 = tabela principal
-                    JOIN +                              // grupo 3+ = joins (pares de tabela+condição)
-                    "(?:\\s+WHERE\\s+(" + CONDITION + "))?" +   // último grupo = condição WHERE
+            "^\\s*SELECT\\s+" + COLUMNS +
+                    "\\s+FROM\\s+" + TABLE +
+                    JOIN +
+                    "(?:\\s+WHERE\\s+(" + CONDITION + "))?" +
                     "\\s*;?\\s*$";
 
     private static final Pattern PATTERN = Pattern.compile(SELECT_REGEX, Pattern.CASE_INSENSITIVE);
 
 
+
+    /**
+     * Valida apenas a estrutura sintática básica do SELECT.
+     */
     public boolean validarSelect(String query) {
         if (query == null || query.isBlank()) return false;
-        Matcher m = PATTERN.matcher(query.trim());
-        if (!m.matches()) return false;
-
-        return validarTabelasEColunas(m);
+        return PATTERN.matcher(query.trim()).matches();
     }
 
-    public String extrairPartes(String query) {
-        Matcher m = PATTERN.matcher(query.trim());
-        if (!m.matches()) return "Query inválida";
-
-        if (!validarTabelasEColunas(m)) {
-            return "Query inválida (tabelas ou colunas não existem)";
-        }
-
-        StringBuilder sb = new StringBuilder();
-        sb.append("Query válida\n");
-
-        String colunas = m.group(1);
-        sb.append("Colunas: ").append(colunas).append("\n");
-
-        String tabela = m.group(2);
-        sb.append("Tabela principal: ").append(tabela).append("\n");
-
-        int groupCount = m.groupCount();
-        boolean temJoin = false;
-        for (int i = 3; i < groupCount; i += 2) {
-            String tabelaJoin = m.group(i);
-            String condicaoJoin = (i + 1 <= groupCount) ? m.group(i + 1) : null;
-            if (tabelaJoin != null) {
-                temJoin = true;
-                sb.append("Join com tabela: ").append(tabelaJoin);
-                if (condicaoJoin != null) {
-                    sb.append(" ON ").append(condicaoJoin);
-                }
-                sb.append("\n");
-            }
-        }
-        if (!temJoin) {
-            sb.append("Sem JOIN\n");
-        }
-
-        String where = m.group(groupCount);
-        if (where != null) {
-            sb.append("Condição WHERE: ").append(where).append("\n");
-        } else {
-            sb.append("Sem WHERE\n");
-        }
-
-        return sb.toString();
-    }
-
-    public Map<String, Object> extrairPartesEstruturadas(String query) {
+    /**
+     * Retorna uma estrutura organizada da query para o otimizador.
+     * Não executa validação semântica (isso será feito em outra camada).
+     */
+    public Map<String, Object> parseQuery(String query) {
         Map<String, Object> partes = new HashMap<>();
         Matcher m = PATTERN.matcher(query.trim());
         if (!m.matches()) return partes;
 
-        String colunasStr = m.group(1);
-        List<String> colunas = Arrays.asList(colunasStr.split("\\s*,\\s*"));
-        partes.put("colunas", colunas);
-
-        partes.put("tabelaPrincipal", m.group(2));
-
-        // Joins — extrair com regex separado
-        List<Map<String, String>> joins = new ArrayList<>();
-        Matcher joinMatcher = Pattern.compile("JOIN\\s+(" + IDENT + ")\\s+ON\\s+(" + CONDITION + ")", Pattern.CASE_INSENSITIVE).matcher(query);
-        while (joinMatcher.find()) {
-            Map<String, String> j = new HashMap<>();
-            j.put("tabela", joinMatcher.group(1));
-            j.put("condicao", joinMatcher.group(2));
-            joins.add(j);
-        }
-        partes.put("joins", joins);
-
-        // WHERE
-        Matcher whereMatcher = Pattern.compile("WHERE\\s+(" + CONDITION + ")", Pattern.CASE_INSENSITIVE).matcher(query);
-        partes.put("where", whereMatcher.find() ? whereMatcher.group(1) : null);
-
+        partes.put("colunas", extrairColunas(m.group(1)));
+        partes.put("tabelaPrincipal", normalizar(m.group(2)));
+        partes.put("joins", extrairJoins(query));
+        partes.put("where", extrairWhere(query));
         return partes;
     }
 
-    private boolean validarTabelasEColunas(Matcher m) {
-        String colunasStr = m.group(1);
-        String[] colunas = colunasStr.split("\\s*,\\s*");
 
-        String tabelaPrincipal = normalizarNome(m.group(2));
-        if (!contémTabela(tabelaPrincipal)) {
-            return false;
-        }
+    // -----------------------------
+    // MÉTODOS AUXILIARES
+    // -----------------------------
 
-        for (String coluna : colunas) {
-            if (coluna.equals("*")) continue;
-            String[] partes = coluna.split("\\.");
-            if (partes.length == 2) {
-                String tabela = normalizarNome(partes[0]);
-                String atributo = normalizarNome(partes[1]);
-                if (!contémAtributo(tabela, atributo)) {
-                    return false;
-                }
-            } else {
-                if (!contémAtributo(tabelaPrincipal, normalizarNome(coluna))) {
-                    return false;
-                }
-            }
-        }
-
-        int groupCount = m.groupCount();
-        for (int i = 3; i < groupCount; i += 2) {
-            String tabelaJoin = m.group(i);
-            if (tabelaJoin != null && !contémTabela(normalizarNome(tabelaJoin))) {
-                return false;
-            }
-        }
-
-        String where = m.group(groupCount);
-        if (where != null) {
-            Matcher identMatcher = Pattern.compile(IDENT).matcher(where);
-            while (identMatcher.find()) {
-                String token = identMatcher.group();
-                if (token.matches("\\d+")) continue; // número
-                if (token.equalsIgnoreCase("AND") || token.equalsIgnoreCase("OR")) continue;
-
-                String[] partes = token.split("\\.");
-                if (partes.length == 2) {
-                    String tabela = normalizarNome(partes[0]);
-                    String atributo = normalizarNome(partes[1]);
-                    if (!contémAtributo(tabela, atributo)) {
-                        return false;
-                    }
-                }
-            }
-        }
-
-        return true;
+    private List<String> extrairColunas(String colunasStr) {
+        return Arrays.asList(colunasStr.split("\\s*,\\s*"));
     }
 
-
-    private String normalizarNome(String nome) {
-        return nome.trim().toLowerCase(); 
+    private List<Map<String, String>> extrairJoins(String query) {
+        List<Map<String, String>> joins = new ArrayList<>();
+        Matcher joinMatcher = Pattern.compile("JOIN\\s+(" + IDENT + ")\\s+ON\\s+(" + CONDITION + ")", Pattern.CASE_INSENSITIVE)
+                .matcher(query);
+        while (joinMatcher.find()) {
+            Map<String, String> join = new HashMap<>();
+            join.put("tabela", normalizar(joinMatcher.group(1)));
+            join.put("condicao", joinMatcher.group(2).trim());
+            joins.add(join);
+        }
+        return joins;
     }
 
-    private boolean contémTabela(String tabela) {
-        for (String t : Valores.tabelas.keySet()) {
-            if (t.equalsIgnoreCase(tabela)) return true;
-        }
-        return false;
+    private String extrairWhere(String query) {
+        Matcher whereMatcher = Pattern.compile("WHERE\\s+(" + CONDITION + ")", Pattern.CASE_INSENSITIVE)
+                .matcher(query);
+        return whereMatcher.find() ? whereMatcher.group(1).trim() : null;
     }
 
-    private boolean contémAtributo(String tabela, String atributo) {
-        for (String t : Valores.tabelas.keySet()) {
-            if (t.equalsIgnoreCase(tabela)) {
-                for (String a : Valores.tabelas.get(t)) {
-                    if (a.equalsIgnoreCase(atributo)) return true;
-                }
-            }
-        }
-        return false;
+    private String normalizar(String nome) {
+        return nome == null ? null : nome.trim().toLowerCase();
     }
 }

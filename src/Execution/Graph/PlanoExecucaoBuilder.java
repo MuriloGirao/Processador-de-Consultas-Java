@@ -1,5 +1,7 @@
 package Execution.Graph;
 
+import Execution.Optimizer.Otimizador;
+
 import java.util.List;
 import java.util.Map;
 
@@ -10,10 +12,15 @@ public class PlanoExecucaoBuilder {
 
         if (partes == null || partes.isEmpty()) return plano;
 
+        // === 0. Aplicar heurísticas de otimização ===
+        partes = Otimizador.otimizar(partes);
+
         String tabelaPrincipal = (String) partes.get("tabelaPrincipal");
         List<Map<String, String>> joins = (List<Map<String, String>>) partes.get("joins");
-        String where = (String) partes.get("where");
-        List<String> colunas = (List<String>) partes.get("colunas");
+        Map<String, String> selecoes = (Map<String, String>) partes.get("selecoes"); // H1
+        Map<String, List<String>> projecoes = (Map<String, List<String>>) partes.get("projecoes"); // H2
+
+        List<String> colunasGlobais = (List<String>) partes.get("colunas"); // projeção final
 
         // === 1. Nó base (tabela principal) ===
         NodoPlano tabelaNodo = new NodoPlano("N1", tabelaPrincipal, NodoPlano.Tipo.TABELA);
@@ -22,7 +29,21 @@ public class PlanoExecucaoBuilder {
 
         String ultimoId = tabelaNodo.getId();
 
-        // === 2. Produto cartesiano (para joins) ===
+        // === 1b. Projeção antecipada da tabela principal (H2) ===
+        if (projecoes != null && projecoes.containsKey(tabelaPrincipal)) {
+            List<String> cols = projecoes.get(tabelaPrincipal);
+            NodoPlano projNodo = new NodoPlano(
+                    "N" + plano.getProximoId(),
+                    "π " + String.join(", ", cols),
+                    NodoPlano.Tipo.PROJECAO
+            );
+            plano.adicionarNodo(projNodo);
+            plano.adicionarAresta(ultimoId, projNodo.getId());
+            plano.adicionarPasso("1b) Projeção antecipada tabela " + tabelaPrincipal + ": " + String.join(", ", cols));
+            ultimoId = projNodo.getId();
+        }
+
+        // === 2. Produto cartesiano / joins ===
         if (joins != null && !joins.isEmpty()) {
             for (Map<String, String> j : joins) {
                 String tabelaJoin = j.get("tabela");
@@ -34,6 +55,20 @@ public class PlanoExecucaoBuilder {
                         NodoPlano.Tipo.TABELA
                 );
                 plano.adicionarNodo(tabelaJoinNodo);
+
+                // Projeção antecipada da tabela do join (H2)
+                if (projecoes != null && projecoes.containsKey(tabelaJoin)) {
+                    List<String> colsJoin = projecoes.get(tabelaJoin);
+                    NodoPlano projJoinNodo = new NodoPlano(
+                            "N" + plano.getProximoId(),
+                            "π " + String.join(", ", colsJoin),
+                            NodoPlano.Tipo.PROJECAO
+                    );
+                    plano.adicionarNodo(projJoinNodo);
+                    plano.adicionarAresta(tabelaJoinNodo.getId(), projJoinNodo.getId());
+                    plano.adicionarPasso("2b) Projeção antecipada tabela " + tabelaJoin + ": " + String.join(", ", colsJoin));
+                    tabelaJoinNodo = projJoinNodo; // agora o join usa o nodo projetado
+                }
 
                 NodoPlano joinNodo = new NodoPlano(
                         "N" + plano.getProximoId(),
@@ -50,29 +85,31 @@ public class PlanoExecucaoBuilder {
             }
         }
 
-        // === 3. Seleção (WHERE) ===
-        if (where != null && !where.isBlank()) {
-            NodoPlano selecaoNodo = new NodoPlano(
-                    "N" + plano.getProximoId(),
-                    "σ " + where,
-                    NodoPlano.Tipo.SELECAO
-            );
-            plano.adicionarNodo(selecaoNodo);
-            plano.adicionarAresta(ultimoId, selecaoNodo.getId());
-            plano.adicionarPasso("3) Seleção: " + where);
-            ultimoId = selecaoNodo.getId();
+        // === 3. Seleções restantes (H1) ===
+        if (selecoes != null) {
+            for (Map.Entry<String, String> entry : selecoes.entrySet()) {
+                NodoPlano selecaoNodo = new NodoPlano(
+                        "N" + plano.getProximoId(),
+                        "σ " + entry.getValue(),
+                        NodoPlano.Tipo.SELECAO
+                );
+                plano.adicionarNodo(selecaoNodo);
+                plano.adicionarAresta(ultimoId, selecaoNodo.getId());
+                plano.adicionarPasso("3) Seleção em " + entry.getKey() + ": " + entry.getValue());
+                ultimoId = selecaoNodo.getId();
+            }
         }
 
-        // === 4. Projeção (SELECT) ===
-        if (colunas != null && !colunas.isEmpty()) {
-            NodoPlano projecaoNodo = new NodoPlano(
+        // === 4. Projeção final ===
+        if (colunasGlobais != null && !colunasGlobais.isEmpty()) {
+            NodoPlano projFinal = new NodoPlano(
                     "N" + plano.getProximoId(),
-                    "π " + String.join(", ", colunas),
+                    "π " + String.join(", ", colunasGlobais),
                     NodoPlano.Tipo.PROJECAO
             );
-            plano.adicionarNodo(projecaoNodo);
-            plano.adicionarAresta(ultimoId, projecaoNodo.getId());
-            plano.adicionarPasso("4) Projeção: " + String.join(", ", colunas));
+            plano.adicionarNodo(projFinal);
+            plano.adicionarAresta(ultimoId, projFinal.getId());
+            plano.adicionarPasso("4) Projeção final: " + String.join(", ", colunasGlobais));
         }
 
         return plano;

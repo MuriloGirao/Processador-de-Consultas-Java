@@ -12,7 +12,7 @@ public class ConversorAlgebra {
         }
 
         // 2. Extrair partes da consulta
-        Map<String, Object> partes = parser.extrairPartesEstruturadas(query);
+        Map<String, Object> partes = parser.parseQuery(query);
 
         String tabelaPrincipal = (String) partes.get("tabelaPrincipal");
         List<Map<String, String>> joins = (List<Map<String, String>>) partes.get("joins");

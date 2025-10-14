@@ -16,7 +16,7 @@ public class MainSwing extends JFrame {
     private JTextArea outputArea;
     private JButton executarBtn;
     private Sintaxe sintaxe;
-    private PainelGrafoPlano painelGrafo; // painel para desenhar o grafo
+    private PainelGrafoPlano painelGrafo;
 
     public MainSwing() {
         super("Validador de SELECT + Plano de Execução");
@@ -76,15 +76,26 @@ public class MainSwing extends JFrame {
         resultado.append("Validação: ").append(valida ? "OK" : "Falhou").append("\n\n");
 
         if (valida) {
-            resultado.append(sintaxe.extrairPartes(consulta)).append("\n");
+            // ✅ Usa o novo método parseQuery
+            Map<String, Object> partes = sintaxe.parseQuery(consulta);
 
+            if (partes.isEmpty()) {
+                resultado.append("Erro ao interpretar a consulta.\n");
+                painelGrafo.setPlano(null);
+                outputArea.setText(resultado.toString());
+                return;
+            }
+
+            // Mostra resultado parseado
+            resultado.append("Partes extraídas:\n").append(partes).append("\n");
+
+            // Conversão para álgebra relacional
             ConversorAlgebra conversor = new ConversorAlgebra();
             String algebra = conversor.converterParaAlgebra(consulta, sintaxe);
             resultado.append("\nÁlgebra Relacional:\n").append(algebra);
 
-            Map<String, Object> partes = sintaxe.extrairPartesEstruturadas(consulta);
+            // Geração de plano de execução
             PlanoExecucao plano = PlanoExecucaoBuilder.build(partes);
-
             resultado.append("\n\nPlano de Execução:\n");
             for (String passo : plano.getPassosOrdenados()) {
                 resultado.append(passo).append("\n");
@@ -99,10 +110,9 @@ public class MainSwing extends JFrame {
     }
 
     public static void main(String[] args) {
-        SwingUtilities.invokeLater(() -> new MainSwing());
+        SwingUtilities.invokeLater(MainSwing::new);
     }
 }
-
 
 class PainelGrafoPlano extends JPanel {
 
@@ -129,59 +139,69 @@ class PainelGrafoPlano extends JPanel {
         int width = getWidth();
         int height = getHeight();
 
-        int yTabela = height - 100;
-        int yCartesiano = height - 200;
-        int ySelecao = height - 300;
-        int yProjecao = height - 380;
+        int yTabela = height - 60;
+        int yCartesiano = height - 150;
+        int ySelecao = height - 250;
+        int yProjecao = height - 350;
 
+        // Armazena posição de cada nodo
+        java.util.Map<String, Point> pos = new java.util.HashMap<>();
+
+        // Distribuição horizontal dinâmica
         int xStep = Math.max(120, width / Math.max(1, plano.getNodos().size()));
         int x = 60;
 
-        java.util.Map<String, Point> pos = new java.util.HashMap<>();
-
+        // Primeiro pass: posiciona tabelas e seleções logo acima da tabela
         for (NodoPlano n : plano.getNodos()) {
             int y;
             switch (n.getTipo()) {
                 case TABELA -> y = yTabela;
-                case CARTESIANO -> y = yCartesiano;
                 case SELECAO -> y = ySelecao;
+                case CARTESIANO -> y = yCartesiano;
                 case PROJECAO -> y = yProjecao;
                 default -> y = height / 2;
             }
 
             int boxW = 100;
             int boxH = 40;
-            int boxX = x;
-            int boxY = y;
 
-            pos.put(n.getId(), new Point(boxX + boxW / 2, boxY + boxH / 2));
+            pos.put(n.getId(), new Point(x, y));
 
             Color fill;
             switch (n.getTipo()) {
                 case TABELA -> fill = new Color(180, 220, 255);
-                case CARTESIANO -> fill = new Color(255, 220, 180);
                 case SELECAO -> fill = new Color(200, 255, 200);
+                case CARTESIANO -> fill = new Color(255, 220, 180);
                 case PROJECAO -> fill = new Color(255, 255, 180);
                 default -> fill = Color.LIGHT_GRAY;
             }
 
             g2.setColor(fill);
-            g2.fillRect(boxX, boxY, boxW, boxH);
+            g2.fillRect(x, y, boxW, boxH);
             g2.setColor(Color.BLACK);
-            g2.drawRect(boxX, boxY, boxW, boxH);
-            g2.drawString(n.getLabel(), boxX + 5, boxY + 25);
+            g2.drawRect(x, y, boxW, boxH);
+            g2.drawString(n.getLabel(), x + 5, y + 25);
 
             x += xStep;
         }
 
+        // Desenha arestas conectando os nós de acordo com a hierarquia
         g2.setStroke(new BasicStroke(2f));
         g2.setColor(Color.DARK_GRAY);
+
         for (ArestaPlano a : plano.getArestas()) {
             Point p1 = pos.get(a.getFrom());
             Point p2 = pos.get(a.getTo());
             if (p1 != null && p2 != null) {
-                g2.drawLine(p1.x, p1.y, p2.x, p2.y);
+                // Conecta centros dos nós
+                int x1 = p1.x + 50; // boxW / 2
+                int y1 = p1.y + 20; // boxH / 2
+                int x2 = p2.x + 50;
+                int y2 = p2.y + 20;
+
+                g2.drawLine(x1, y1, x2, y2);
             }
         }
     }
+
 }

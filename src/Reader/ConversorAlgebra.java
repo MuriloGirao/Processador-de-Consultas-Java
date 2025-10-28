@@ -1,48 +1,60 @@
 package Reader;
 
-import java.util.List;
-import java.util.Map;
+import Execution.Optimizer.Otimizador;
+import java.util.*;
 
 public class ConversorAlgebra {
 
     public String converterParaAlgebra(String query, Sintaxe parser) {
-        // 1. Validar novamente
         if (!parser.validarSelect(query)) {
-            return "Consulta inválida para conversão";
+            return "Consulta inválida para conversão.";
         }
 
-        // 2. Extrair partes da consulta
-        Map<String, Object> partes = parser.parseQuery(query);
+        Map<String, Object> partesOriginais = parser.parseQuery(query);
+        if (partesOriginais == null || partesOriginais.isEmpty()) {
+            return "Erro ao interpretar a consulta.";
+        }
+
+        Map<String, Object> partes = Otimizador.otimizar(partesOriginais);
 
         String tabelaPrincipal = (String) partes.get("tabelaPrincipal");
         List<Map<String, String>> joins = (List<Map<String, String>>) partes.get("joins");
-        String where = (String) partes.get("where");
+        Map<String, String> selecoes = (Map<String, String>) partes.get("selecoes");
+        Map<String, List<String>> projecoes = (Map<String, List<String>>) partes.get("projecoes");
         List<String> colunas = (List<String>) partes.get("colunas");
 
-        // 3. Montar álgebra relacional
         StringBuilder algebra = new StringBuilder();
+        algebra.append("π ").append(String.join(", ", colunas)).append(" (");
 
-        // projeção (π)
-        algebra.append("π ");
-        algebra.append(String.join(", ", colunas));
-        algebra.append(" (");
+        String corpo = construirBlocoTabela(tabelaPrincipal, selecoes, projecoes);
 
-        // seleção (σ)
-        if (where != null && !where.isBlank()) {
-            algebra.append("σ ").append(where).append(" (");
+        if (joins != null && !joins.isEmpty()) {
+            for (Map<String, String> join : joins) {
+                String tabelaJoin = join.get("tabela");
+                String condicao = join.get("condicao");
+                String blocoJoin = construirBlocoTabela(tabelaJoin, selecoes, projecoes);
+                corpo = "(" + corpo + " ⋈_{" + condicao + "} " + blocoJoin + ")";
+            }
         }
 
-        // junções (⋈)
-        String relacao = tabelaPrincipal;
-        for (Map<String, String> j : joins) {
-            relacao = "(" + relacao + " ⋈ " + j.get("condicao") + " " + j.get("tabela") + ")";
-        }
-
-        algebra.append(relacao);
-
-        if (where != null && !where.isBlank()) algebra.append(")");
-        algebra.append(")");
-
+        algebra.append(corpo).append(")");
         return algebra.toString();
+    }
+
+    private String construirBlocoTabela(String tabela,
+                                        Map<String, String> selecoes,
+                                        Map<String, List<String>> projecoes) {
+
+        String base = tabela;
+
+        if (selecoes != null && selecoes.containsKey(tabela)) {
+            base = "σ " + selecoes.get(tabela) + " (" + base + ")";
+        }
+
+        if (projecoes != null && projecoes.containsKey(tabela)) {
+            base = "π " + String.join(", ", projecoes.get(tabela)) + " (" + base + ")";
+        }
+
+        return base;
     }
 }
